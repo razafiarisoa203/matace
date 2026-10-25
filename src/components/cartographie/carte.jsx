@@ -32,7 +32,7 @@ export default function Carte() {
   useEffect(() => {
     if (mapRef.current) return;
 
-    const map = L.map("mapid").setView([-21.453611, 47.085833], 13);
+    const map = L.map("mapid").setView([-23.35, 43.67], 13);
 
     L.tileLayer("https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", {
       attribution: "© Google",
@@ -150,7 +150,7 @@ export default function Carte() {
               step="any"
               value={lat}
               onChange={(e) => setLat(e.target.value)}
-              placeholder="-21.453611"
+              placeholder="-23.35"
               className="w-full border border-gray-300 px-3 py-2.5 rounded-lg focus:ring-2 focus:ring-green-500"
             />
           </div>
@@ -163,7 +163,7 @@ export default function Carte() {
               step="any"
               value={lon}
               onChange={(e) => setLon(e.target.value)}
-              placeholder="47.085833"
+              placeholder="43.67"
               className="w-full border border-gray-300 px-3 py-2.5 rounded-lg focus:ring-2 focus:ring-green-500"
             />
           </div>

@@ -9,18 +9,15 @@ const UsersList = () => {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [searchTerm, setSearchTerm] = useState('');
-  const [forceRender, setForceRender] = useState(0);
-  const [limit, setLimit] = useState(10);
+  const limit = 10;
   const [roles, setRoles] = useState([]);
   const [rolesLoading, setRolesLoading] = useState(true);
   const [editingRoles, setEditingRoles] = useState(null);
-  const [selectedRole, setSelectedRole] = useState('');
+  const [selectedRoleIds, setSelectedRoleIds] = useState([]);
+  const [savingRoles, setSavingRoles] = useState(false);
   const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, totalPages: 1 });
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   const [photos, setPhotos] = useState({}); // { [id_citizen]: photo_url }
-
-  forceRender
-  setLimit
 
   useEffect(() => {
     users.forEach((user) => {
@@ -69,11 +66,11 @@ const UsersList = () => {
       try {
         const rolesData = await roleService.getRoles();
         setRoles(rolesData);
-        setRolesLoading(false);
-        setForceRender(prev => prev + 1);
       } catch (error) {
         console.error('Erreur lors du chargement des rôles:', error);
         toast.error('Erreur lors du chargement des rôles');
+      } finally {
+        setRolesLoading(false);
       }
     };
     loadRoles();
@@ -147,30 +144,47 @@ const UsersList = () => {
   const handleRoleEdit = (user) => {
     const userId = user.user_id || user.id;
     setEditingRoles(userId);
-    const currentRoleId = user.appUserRoles?.[0]?.role?.role_id || '';
-    setSelectedRole(currentRoleId.toString());
+    const currentRoleIds = Array.isArray(user.appUserRoles)
+      ? user.appUserRoles
+          .map((assignment) => assignment.role?.role_id ?? assignment.role?.id ?? assignment.role_id)
+          .filter((roleId) => roleId != null)
+          .map(String)
+      : [];
+    setSelectedRoleIds(currentRoleIds);
   };
 
-  const handleRoleChange = (roleId) => {
-    setSelectedRole(roleId);
+  const handleRoleChange = (roleId, checked) => {
+    setSelectedRoleIds((currentRoleIds) =>
+      checked
+        ? [...new Set([...currentRoleIds, roleId])]
+        : currentRoleIds.filter((currentRoleId) => currentRoleId !== roleId)
+    );
   };
 
   const saveUserRoles = async (userId) => {
     try {
-      setLoading(true);
+      setSavingRoles(true);
+      const user = users.find((item) => (item.user_id || item.id) === userId);
+      const currentRoleIds = Array.isArray(user?.appUserRoles)
+        ? user.appUserRoles
+            .map((assignment) => assignment.role?.role_id ?? assignment.role?.id ?? assignment.role_id)
+            .filter((roleId) => roleId != null)
+            .map(Number)
+            .filter(Number.isSafeInteger)
+        : [];
+      const nextRoleIds = selectedRoleIds.map(Number).filter(Number.isSafeInteger);
+      const removedRoleIds = currentRoleIds.filter((roleId) => !nextRoleIds.includes(roleId));
 
-      if (selectedRole && selectedRole !== '') {
-        await roleService.assignUserRoles(userId, [parseInt(selectedRole)]);
-      } else {
-        const currentRoles = users.find(u => (u.user_id || u.id) === userId)?.appUserRoles?.map(ur => ur.role.role_id) || [];
-        if (currentRoles.length > 0) {
-          await roleService.removeUserRoles(userId, currentRoles);
-        }
+      if (nextRoleIds.length > 0) {
+        await roleService.assignUserRoles(userId, nextRoleIds);
+      }
+      if (removedRoleIds.length > 0) {
+        await roleService.removeUserRoles(userId, removedRoleIds);
       }
 
       toast.success('Rôle mis à jour avec succès');
       setEditingRoles(null);
-      setSelectedRole('');
+      setSelectedRoleIds([]);
 
       const response = await getUsers(page, limit, debouncedSearchTerm);
       const usersData = response.data || response.users || [];
@@ -187,19 +201,17 @@ const UsersList = () => {
       console.error('Erreur lors de la mise à jour du rôle:', error);
       toast.error(`Erreur lors de la mise à jour du rôle: ${error?.response?.data?.message || error?.message || 'Erreur inconnue'}`);
     } finally {
-      setLoading(false);
+      setSavingRoles(false);
     }
   };
 
   const cancelEdit = () => {
     setEditingRoles(null);
-    setSelectedRole('');
+    setSelectedRoleIds([]);
   };
 
   return (
     <div className="container mx-auto px-4 py-8">
-      <h1 className="text-2xl font-bold mb-6">Gestion des Utilisateurs</h1>
-
       {/* Search */}
       <form onSubmit={handleSearch} className="mb-6 flex">
         <input
@@ -272,46 +284,54 @@ const UsersList = () => {
                         <td className="px-6 py-4 whitespace-nowrap">{user.user_phone || 'Non défini'}</td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           {editingRoles === userId ? (
-                            <div>
-                              <select
-                                value={selectedRole || ''}
-                                onChange={(e) => handleRoleChange(e.target.value)}
-                                className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-green-500 focus:border-green-500"
-                              >
-                                <option value="">Aucun rôle</option>
-                                {roles && roles.length > 0 ? (
-                                  roles.map((role, index) => (
-                                    <option key={`role-option-${role.role_id}-${index}`} value={role.role_id}>
-                                      {role.role_name}
-                                    </option>
-                                  ))
-                                ) : (
-                                  <option disabled>{rolesLoading ? 'Chargement des rôles...' : 'Aucun rôle disponible'}</option>
-                                )}
-                              </select>
+                            <div className="min-w-48 space-y-2">
+                              {rolesLoading ? (
+                                <span className="text-sm text-gray-500">Chargement des rôles...</span>
+                              ) : roles.length > 0 ? (
+                                roles.map((role, index) => {
+                                  const roleId = String(role.role_id ?? role.id);
+                                  const inputId = `user-${userId}-role-${roleId}`;
+                                  return (
+                                    <label key={`role-option-${roleId}-${index}`} htmlFor={inputId} className="flex items-center gap-2 text-sm text-gray-700">
+                                      <input
+                                        id={inputId}
+                                        type="checkbox"
+                                        value={roleId}
+                                        checked={selectedRoleIds.includes(roleId)}
+                                        onChange={(event) => handleRoleChange(roleId, event.target.checked)}
+                                        disabled={savingRoles}
+                                        className="rounded border-gray-300 text-green-600 focus:ring-green-500"
+                                      />
+                                      {role.role_name || role.name || `Rôle ${roleId}`}
+                                    </label>
+                                  );
+                                })
+                              ) : (
+                                <span className="text-sm text-gray-500">Aucun rôle disponible</span>
+                              )}
                             </div>
                           ) : (
                             <div className="flex flex-wrap gap-1">
-                              {user.appUserRoles?.map(ur => (
-                                <span key={ur.role.role_id} className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                                  {ur.role.role_name}
+                              {Array.isArray(user.appUserRoles) && user.appUserRoles.length > 0 ? user.appUserRoles.map((assignment, index) => (
+                                <span key={assignment.role?.role_id ?? assignment.role_id ?? index} className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                  {assignment.role?.role_name || assignment.role_name || 'Rôle'}
                                 </span>
-                              )) || <span className="text-sm text-gray-500">Aucun rôle</span>}
+                              )) : <span className="text-sm text-gray-500">Aucun rôle</span>}
                             </div>
                           )}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
                           {editingRoles === userId ? (
                             <>
-                              <button onClick={() => saveUserRoles(userId)} className="text-green-600 hover:text-green-900 mr-2">Enregistrer</button>
-                              <button onClick={cancelEdit} className="text-gray-600 hover:text-gray-900">Annuler</button>
+                              <button onClick={() => saveUserRoles(userId)} disabled={savingRoles || rolesLoading || roles.length === 0} className="text-green-600 hover:text-green-900 disabled:cursor-not-allowed disabled:opacity-50 mr-2">{savingRoles ? 'Enregistrement...' : 'Enregistrer'}</button>
+                              <button onClick={cancelEdit} disabled={savingRoles} className="text-gray-600 hover:text-gray-900 disabled:opacity-50">Annuler</button>
                             </>
                           ) : (
                             <button
                               onClick={() => handleRoleEdit(user)}
                               className="text-indigo-600 hover:text-indigo-900"
                             >
-                              Modifier les rôles
+                              {Array.isArray(user.appUserRoles) && user.appUserRoles.length > 0 ? 'Modifier les rôles' : 'Assigner un rôle'}
                             </button>
                           )}
                         </td>
